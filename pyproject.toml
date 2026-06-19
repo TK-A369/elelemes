@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "elelemes"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "GPL"
+keywords = []
+authors = [
+  { name = "Tomasz Kawalec", email = "tkawalec369@gmail.com" },
+]
+# classifiers = [
+#   "Development Status :: 4 - Beta",
+#   "Programming Language :: Python",
+#   "Programming Language :: Python :: 3.8",
+#   "Programming Language :: Python :: 3.9",
+#   "Programming Language :: Python :: 3.10",
+#   "Programming Language :: Python :: 3.11",
+#   "Programming Language :: Python :: 3.12",
+#   "Programming Language :: Python :: Implementation :: CPython",
+#   "Programming Language :: Python :: Implementation :: PyPy",
+# ]
+dependencies = [
+  "ollama",
+  "prompt_toolkit"
+]
+
+# [project.urls]
+# Documentation = "https://github.com/Tomasz Kawalec/elelemes#readme"
+# Issues = "https://github.com/Tomasz Kawalec/elelemes/issues"
+# Source = "https://github.com/Tomasz Kawalec/elelemes"
+
+[tool.hatch.version]
+path = "src/elelemes/__about__.py"
+
+# [tool.hatch.envs.types]
+# extra-dependencies = [
+#   "mypy>=1.0.0",
+# ]
+# [tool.hatch.envs.types.scripts]
+# check = "mypy --install-types --non-interactive {args:src/elelemes tests}"
+
+# [tool.coverage.run]
+# source_pkgs = ["elelemes", "tests"]
+# branch = true
+# parallel = true
+# omit = [
+#   "src/elelemes/__about__.py",
+# ]
+
+# [tool.coverage.paths]
+# elelemes = ["src/elelemes", "*/elelemes/src/elelemes"]
+# tests = ["tests", "*/elelemes/tests"]
+
+# [tool.coverage.report]
+# exclude_lines = [
+#   "no cov",
+#   "if __name__ == .__main__.:",
+#   "if TYPE_CHECKING:",
+# ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/elelemes"]
