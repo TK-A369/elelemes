@@ -4,8 +4,10 @@ import asyncio
 import prompt_toolkit as ptk
 import ollama
 
-async def read_input(input_queue: asyncio.Queue, prompt_session: ptk.PromptSession):
+async def read_input(input_queue: asyncio.Queue, input_evt: asyncio.Event, prompt_session: ptk.PromptSession):
     while True:
+        await input_evt.wait()
+        input_evt.clear()
         with ptk.patch_stdout.patch_stdout():
             msg = await prompt_session.prompt_async("> ")
         await input_queue.put(msg)
@@ -14,22 +16,61 @@ async def main():
     ptk.print_formatted_text("Hello world!")
 
     input_queue = asyncio.Queue()
+    input_evt = asyncio.Event()
+    input_evt.set()
     prompt_session = ptk.PromptSession()
-    asyncio.create_task(read_input(input_queue, prompt_session))
+    asyncio.create_task(read_input(input_queue, input_evt, prompt_session))
 
     llm_msgs = []
     ollama_cl = ollama.AsyncClient()
 
+    tools = [
+        {
+            'type': 'function',
+            'function': {
+                'name': 'bc',
+                'description': 'Run `bc` - a standard arbitrary precision calculator commonly found on Unix-like systems.',
+                'parameters': {
+                    'type': 'object',
+                    'required': ['expr'],
+                    'properties': {
+                        'expr': {'type': 'string', 'description': 'Input for `bc` executable'}
+                    }
+                }
+            }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'python_exec',
+                'description': 'Run the Python 3.12 interpreter. It will be executed in an isolated container. The program may not expect data on stdin (i.e. call `input`). The results should be printed to stdout. This tool will return an object with two fields: `stdout` and `stderr` - two strings containing the scripts\'s stdout and stderr, respectively, which are expected to be UTF-8 encoded.',
+                'parameters': {
+                    'type': 'object',
+                    'required': ['code'],
+                    'properties': {
+                        'code': {'type': 'string', 'description': 'The Python source code to execute'}
+                    }
+                }
+            }
+        }
+    ]
+
+    new_user_msg = True
     while True:
-        msg = await input_queue.get()
-        # await asyncio.sleep(0.5)
-        # print(msg)
-        llm_msgs.append({'role': 'user', 'content': msg})
+        if new_user_msg:
+            msg = await input_queue.get()
+            # await asyncio.sleep(0.5)
+            # print(msg)
+            llm_msgs.append({'role': 'user', 'content': msg})
+
+            new_user_msg = False
 
         ptk.print_formatted_text("Generating...")
+        ptk.print_formatted_text(f"{repr(llm_msgs)}")
         resp_stream = await ollama_cl.chat(
             model='gemma4:e4b',
             messages=llm_msgs,
+            tools=tools,
             stream=True)
         prev_status = ''
         full_thinking = ""
@@ -58,20 +99,72 @@ async def main():
                     ptk.print_formatted_text(f"\n## Calls tool {tc.function.name}")
                 tool_calls_reqs.extend(tool_calls)
 
+            if chunk.done:
+                ptk.print_formatted_text("\n## Done!")
+                new_user_msg = True
+
         ptk.print_formatted_text('')
         
         assistant_msg = {'role': 'assistant', 'content': full_resp}
         if full_thinking:
             assistant_msg['thinking'] = full_thinking
-        if tool_calls:
+        if tool_calls_reqs:
             assistant_msg['tool_calls'] = tool_calls_reqs
         llm_msgs.append(assistant_msg)
         
         if len(tool_calls_reqs) > 0:
-            for tc in tool_calls:
+            for tc in tool_calls_reqs:
                 t_name = tc.function.name
                 t_args = tc.function.arguments
-                ptk.print_formatted_text(f"n## Executing tool {t_name} with args {t_args}")
+                ptk.print_formatted_text(f"## Executing tool {t_name} with args {t_args}")
+
+                t_result = None
+                if t_name == 'bc':
+                    try:
+                        async with asyncio.timeout(20):
+                            bc_proc = await asyncio.create_subprocess_exec(
+                                'podman', 'run',
+                                '-i', '--rm', 'ubuntu-with-stuff:latest',
+                                'bc',
+                                stdin=asyncio.subprocess.PIPE,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE)
+                            bc_expr = t_args['expr']
+                            # ptk.print_formatted_text(f"{bc_expr=}, {type(bc_expr)=}")
+                            (bc_stdout, bc_stderr) = await bc_proc.communicate(bytes(bc_expr + '\n', 'ascii'))
+                            bc_stdout = bc_stdout.decode('ascii').strip()
+                            bc_stderr = bc_stderr.decode('ascii').strip()
+                            # ptk.print_formatted_text(f"{(bc_stdout, bc_stderr)=}")
+                            # t_result = {'stdout': bc_stdout, 'stderr': bc_stderr}
+                            t_result = bc_stdout
+                    except TimeoutError:
+                        t_result = 'Timeout'
+                        ptk.print_formatted_text("Timeout in `bc`!")
+                elif t_name == 'python_exec':
+                    try:
+                        async with asyncio.timeout(20):
+                            py_proc = await asyncio.create_subprocess_exec(
+                                'podman', 'run',
+                                '-i', '--rm', 'ubuntu-with-stuff:latest',
+                                'python3',
+                                stdin=asyncio.subprocess.PIPE,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE)
+                            (py_stdout, py_stderr) = await py_proc.communicate(bytes(t_args['code'], 'utf-8'))
+                            py_stdout = py_stdout.decode('utf-8').strip()
+                            py_stderr = py_stderr.decode('utf-8').strip()
+                            t_result = {'stdout': py_stdout, 'stderr': py_stderr}
+                            # t_result = py_stdout
+                    except TimeoutError:
+                        t_result = 'Timeout'
+                        ptk.print_formatted_text("Timeout in `python_exec`!")
+                else:
+                    t_result = 'Unknown tool!'
+                llm_msgs.append({'role': 'tool', 'tool_name': t_name, 'content': str(t_result)})
+            new_user_msg = False
+
+        if new_user_msg:
+            input_evt.set()
 
 if __name__ == '__main__':
     asyncio.run(main())
