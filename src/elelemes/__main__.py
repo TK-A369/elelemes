@@ -52,6 +52,21 @@ async def main():
                     }
                 }
             }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'ed_editor',
+                'description': 'Run the Ed editor. It is a line-based editor originating from Unix, whose commonly used derivative, `sed`, is often used in shell scripts. The editor will receive editing instructions provided as parameter to this tool and perform specified operations. Everything printed by Ed will be returned. If modifications should be saved, an appropriate command must be added at the end of instructions. Common commands include: `i` for insert before, `a` for insert after, `w` for write, `p` for print, `n` for print with line number annotations. Commands might be preceded with a line selector, like number or `%` (entire buffer).',
+                'parameters': {
+                    'type': 'object',
+                    'required': ['instructions'],
+                    'properties': {
+                        'file': {'type': 'string', 'description': 'File to work on. This parameter might be ommited to start with empty buffer'},
+                        'instructions': {'type': 'string', 'description': 'The instructions for Ed to execute. If the file should be saved, a write instruction should be added here.'}
+                    }
+                }
+            }
         }
     ]
 
@@ -119,6 +134,7 @@ async def main():
                 ptk.print_formatted_text(f"## Executing tool {t_name} with args {t_args}")
 
                 t_result = None
+                # TODO: Reduce code duplication related to subprocess running
                 if t_name == 'bc':
                     try:
                         async with asyncio.timeout(20):
@@ -158,6 +174,24 @@ async def main():
                     except TimeoutError:
                         t_result = 'Timeout'
                         ptk.print_formatted_text("Timeout in `python_exec`!")
+                elif t_name == 'ed_editor':
+                    try:
+                        async with asyncio.timeout(20):
+                            ed_proc = await asyncio.create_subprocess_exec(
+                                'podman', 'run',
+                                '-i', '--volume', '/tmp/cont:/root/ws',
+                                'ubuntu-with-stuff:latest',
+                                'ed', *([t_args['file']] if 'file' in t_args else []),
+                                stdin=asyncio.subprocess.PIPE,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE)
+                            (ed_stdout, ed_stderr) = await ed_proc.communicate(bytes(t_args['instructions'], 'utf-8'))
+                            ed_stdout = ed_stdout.decode('utf-8').strip()
+                            ed_stderr = ed_stderr.decode('utf-8').strip()
+                            t_result = ed_stdout
+                    except TimeoutError:
+                        t_result = 'Timeout'
+                        ptk.print_formatted_text("Timeout in `ed_editor`!")
                 else:
                     t_result = 'Unknown tool!'
                 llm_msgs.append({'role': 'tool', 'tool_name': t_name, 'content': str(t_result)})
